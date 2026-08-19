@@ -1,3 +1,4 @@
 node_modules
 komiku-proxy/node_modules
+shinigami-proxy/node_modules
 .DS_Store

@@ -103,17 +103,25 @@
       <button class="source-item" data-source="komiku">
         <span class="source-item__name">Komiku</span>
         <span class="source-item__desc">Komik bahasa Indonesia. Butuh proxy server (lihat README) karena Komiku tidak punya API publik.</span>
-        <span class="source-item__status" id="komikuStatus">Belum diatur</span>
+        <span class="source-item__status" data-status-for="komiku">Belum diatur</span>
+      </button>
+      <button class="source-item" data-source="shinigami">
+        <span class="source-item__name">Shinigami</span>
+        <span class="source-item__desc">Manhwa/manhua/manga bahasa Indonesia. Juga butuh proxy — domainnya sering berubah &amp; memakai Cloudflare, jadi lebih rawan gagal dibanding Komiku.</span>
+        <span class="source-item__status" data-status-for="shinigami">Belum diatur</span>
       </button>
     </div>
-    <div id="komikuSetup" class="komiku-setup hidden">
-      <label for="komikuProxyInput">URL proxy Komiku kamu</label>
-      <input id="komikuProxyInput" type="url" placeholder="https://proxy-kamu.example.com">
-      <div style="display:flex; gap:8px;">
-        <button id="komikuProxySave" class="btn btn--primary btn--sm">Simpan</button>
-        <button id="komikuUseSameOrigin" type="button" class="btn btn--ghost btn--sm">Pakai domain situs ini</button>
+    <div id="proxySetup" class="komiku-setup hidden">
+      <label for="proxyUrlInput" id="proxySetupLabel">URL proxy kamu</label>
+      <input id="proxyUrlInput" type="url" placeholder="https://proxy-kamu.example.com">
+      <p id="proxyUrlWarning" class="modal__error hidden" style="text-align:left;margin-top:0;"></p>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button id="proxySaveBtn" class="btn btn--primary btn--sm">Simpan</button>
+        <button id="proxyUseSameOrigin" type="button" class="btn btn--ghost btn--sm">Pakai domain situs ini</button>
+        <button id="proxyTestBtn" type="button" class="btn btn--ghost btn--sm">Tes koneksi</button>
       </div>
-      <p class="hint">Kalau kamu deploy seluruh folder ini ke Vercel, endpoint <code>/api/*</code> sudah ikut ter-deploy di domain yang sama — klik "Pakai domain situs ini". Kalau proxy di-hosting terpisah (Render/Railway/dsb dari folder <code>komiku-proxy/</code>), tempel URL-nya manual lalu Simpan.</p>
+      <p id="proxyTestResult" class="hint"></p>
+      <p class="hint" id="proxyHint"></p>
     </div>
   </div>
 </div>

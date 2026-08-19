@@ -177,6 +177,7 @@ img{max-width:100%; display:block;}
 }
 .card__source.mangadex{color:#ff6740;}
 .card__source.komiku{color:#7fd1c1;}
+.card__source.shinigami{color:#c9a24b;}
 .card__badge{
   position:absolute; top:8px; right:8px; width:28px; height:28px; border-radius:50%;
   background:var(--seal); color:#fff; display:flex; align-items:center; justify-content:center;

@@ -69,17 +69,23 @@ function stateBox({ icon = "忍", title, desc = "", actionLabel, actionHref }) {
 }
 
 /* ---------------------------------------------------------
-   SOURCE MANAGEMENT (MangaDex <-> Komiku)
+   SOURCE MANAGEMENT (MangaDex <-> Komiku <-> Shinigami)
 --------------------------------------------------------- */
+const SOURCE_LABELS = { mangadex: "MangaDex", komiku: "Komiku", shinigami: "Shinigami" };
+const PROXY_SOURCES = ["komiku", "shinigami"]; // sources that need a self-hosted proxy
+
 const Source = {
   get current() { return localStorage.getItem("ninzy:source") || "mangadex"; },
   set current(v) { localStorage.setItem("ninzy:source", v); },
-  get komikuProxy() { return localStorage.getItem("ninzy:komikuProxy") || ""; },
-  set komikuProxy(v) { localStorage.setItem("ninzy:komikuProxy", v.replace(/\/$/, "")); }
+  proxy(sourceKey) { return localStorage.getItem(`ninzy:${sourceKey}Proxy`) || ""; },
+  setProxy(sourceKey, v) { localStorage.setItem(`ninzy:${sourceKey}Proxy`, v.replace(/\/$/, "")); },
+  // kept for backwards compatibility with earlier code paths
+  get komikuProxy() { return this.proxy("komiku"); },
+  set komikuProxy(v) { this.setProxy("komiku", v); }
 };
 
 function updateSourceChip() {
-  $("#sourceLabel").textContent = Source.current === "komiku" ? "Komiku" : "MangaDex";
+  $("#sourceLabel").textContent = SOURCE_LABELS[Source.current] || Source.current;
 }
 
 /* ---------------------------------------------------------
@@ -224,17 +230,22 @@ const MangaDex = {
 };
 
 /* ---------------------------------------------------------
-   ADAPTER: Komiku — via self-hosted proxy (no official API)
-   Proxy contract (implement in komiku-proxy/server.js):
+   ADAPTER FACTORY: sources without an official/CORS-open API
+   (Komiku, Shinigami) — each needs a self-hosted proxy that
+   implements this exact contract:
      GET /api/latest              -> [{id,title,cover,chapter,type}]
      GET /api/popular             -> same shape
      GET /api/search?q=           -> same shape
+     GET /api/genres              -> [{id,name}]
+     GET /api/genre?slug=         -> same shape as /api/popular
      GET /api/detail?id=          -> {id,title,cover,description,status,tags,author,chapters:[{id,chapter,title}]}
      GET /api/pages?id=           -> [imageUrl,...]
+   See komiku-proxy/ and shinigami-proxy/ for reference implementations,
+   and api/ for the Vercel Functions equivalents.
 --------------------------------------------------------- */
-function komikuMap(item) {
+function scrapedMap(sourceKey, item) {
   return {
-    source: "komiku",
+    source: sourceKey,
     id: item.id,
     title: item.title,
     cover: item.cover,
@@ -246,59 +257,41 @@ function komikuMap(item) {
   };
 }
 
-function requireKomikuProxy() {
-  if (!Source.komikuProxy) {
-    throw new Object.assign(new Error("KOMIKU_NOT_CONFIGURED"), { code: "KOMIKU_NOT_CONFIGURED" });
+function makeProxyAdapter(sourceKey) {
+  const label = SOURCE_LABELS[sourceKey] || sourceKey;
+  function requireProxy() {
+    if (!Source.proxy(sourceKey)) {
+      throw Object.assign(new Error(`${sourceKey.toUpperCase()}_NOT_CONFIGURED`), { code: "PROXY_NOT_CONFIGURED", source: sourceKey });
+    }
   }
+  async function call(path) {
+    requireProxy();
+    const res = await fetch(`${Source.proxy(sourceKey)}/api/${sourceKey}${path}`);
+    if (!res.ok) throw new Error(`Proxy ${label} error ${res.status}`);
+    return res.json();
+  }
+  return {
+    async popular() { return (await call("/popular")).map(it => scrapedMap(sourceKey, it)); },
+    async latest() { return (await call("/latest")).map(it => scrapedMap(sourceKey, it)); },
+    async search(q) { return (await call(`/search?q=${encodeURIComponent(q)}`)).map(it => scrapedMap(sourceKey, it)); },
+    async detail(id) {
+      const data = await call(`/detail?id=${encodeURIComponent(id)}`);
+      return { manga: scrapedMap(sourceKey, data), chapters: data.chapters || [] };
+    },
+    async pages(chapterId) { return call(`/pages?id=${encodeURIComponent(chapterId)}`); },
+    async genres() { return call("/genres"); },
+    async byGenre(slug) { return (await call(`/genre?slug=${encodeURIComponent(slug)}`)).map(it => scrapedMap(sourceKey, it)); }
+  };
 }
 
-const Komiku = {
-  async popular() {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/popular`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    return (await res.json()).map(komikuMap);
-  },
-  async latest() {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/latest`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    return (await res.json()).map(komikuMap);
-  },
-  async search(q) {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/search?q=${encodeURIComponent(q)}`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    return (await res.json()).map(komikuMap);
-  },
-  async detail(id) {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/detail?id=${encodeURIComponent(id)}`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    const data = await res.json();
-    return { manga: komikuMap(data), chapters: data.chapters || [] };
-  },
-  async pages(chapterId) {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/pages?id=${encodeURIComponent(chapterId)}`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    return res.json();
-  },
-  async genres() {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/genres`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    return res.json();
-  },
-  async byGenre(slug) {
-    requireKomikuProxy();
-    const res = await fetch(`${Source.komikuProxy}/api/genre?slug=${encodeURIComponent(slug)}`);
-    if (!res.ok) throw new Error("Proxy Komiku error " + res.status);
-    return (await res.json()).map(komikuMap);
-  }
-};
+const Komiku = makeProxyAdapter("komiku");
+const Shinigami = makeProxyAdapter("shinigami");
 
-function adapterFor(source) { return source === "komiku" ? Komiku : MangaDex; }
+function adapterFor(source) {
+  if (source === "komiku") return Komiku;
+  if (source === "shinigami") return Shinigami;
+  return MangaDex;
+}
 
 /* ---------------------------------------------------------
    FIRESTORE: library (bookmarks) & history
@@ -437,12 +430,53 @@ onAuthStateChanged(auth, user => {
 --------------------------------------------------------- */
 function renderSourceModalState() {
   $$(".source-item").forEach(el => el.classList.toggle("active", el.dataset.source === Source.current));
-  const komikuOk = !!Source.komikuProxy;
-  $("#komikuStatus").textContent = komikuOk ? "Terhubung" : "Belum diatur";
-  $("#komikuStatus").classList.toggle("ok", komikuOk);
-  $("#komikuSetup").classList.toggle("hidden", Source.current !== "komiku");
-  $("#komikuProxyInput").value = Source.komikuProxy;
+
+  PROXY_SOURCES.forEach(key => {
+    const ok = !!Source.proxy(key);
+    const statusEl = $(`[data-status-for="${key}"]`);
+    if (statusEl) {
+      statusEl.textContent = ok ? "Terhubung" : "Belum diatur";
+      statusEl.classList.toggle("ok", ok);
+    }
+  });
+
+  const isProxySource = PROXY_SOURCES.includes(Source.current);
+  $("#proxySetup").classList.toggle("hidden", !isProxySource);
+  $("#proxyTestResult").textContent = "";
+  $("#proxyUrlWarning").classList.add("hidden");
+  if (isProxySource) {
+    const label = SOURCE_LABELS[Source.current];
+    $("#proxySetupLabel").textContent = `URL proxy ${label} kamu`;
+    $("#proxyUrlInput").value = Source.proxy(Source.current);
+    $("#proxyHint").innerHTML = Source.current === "shinigami"
+      ? `Shinigami sering ganti domain &amp; pakai proteksi Cloudflare, jadi proxy-nya lebih rawan gagal dibanding Komiku — lihat catatan di README. Kalau deploy ke Vercel, endpoint <code>/api/shinigami/*</code> sudah ikut ter-deploy — klik "Pakai domain situs ini".`
+      : `Kalau kamu deploy seluruh folder ini ke Vercel, endpoint <code>/api/komiku/*</code> sudah ikut ter-deploy di domain yang sama — klik "Pakai domain situs ini". Kalau proxy di-hosting terpisah, tempel URL-nya manual lalu Simpan.`;
+  }
 }
+
+// Domains that are the SOURCE's own site, not a valid proxy URL — a common
+// mistake is pasting the target site's domain instead of your own deployment.
+const TARGET_SITE_DOMAINS = {
+  komiku: ["komiku.org", "komiku.id"],
+  shinigami: ["shinigami.asia", "shinigami.id", "shinigami.cx", "shinigamitoon.com"]
+};
+
+function checkProxyUrlMistake(sourceKey, url) {
+  if (!url) return "";
+  let host = "";
+  try { host = new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+  const targets = TARGET_SITE_DOMAINS[sourceKey] || [];
+  if (targets.some(d => host === d || host.endsWith("." + d))) {
+    return `Ini domain ${SOURCE_LABELS[sourceKey]} sendiri, bukan proxy-mu. URL proxy harus mengarah ke domain hosting kamu (Vercel/Render/dll), bukan ke situs sumbernya.`;
+  }
+  return "";
+}
+
+$("#proxyUrlInput").addEventListener("input", () => {
+  const warning = checkProxyUrlMistake(Source.current, $("#proxyUrlInput").value.trim());
+  $("#proxyUrlWarning").textContent = warning;
+  $("#proxyUrlWarning").classList.toggle("hidden", !warning);
+});
 
 $("#sourceToggleBtn").addEventListener("click", () => {
   renderSourceModalState();
@@ -463,18 +497,56 @@ $$(".source-item").forEach(el => {
     }
   });
 });
-$("#komikuProxySave").addEventListener("click", () => {
-  Source.komikuProxy = $("#komikuProxyInput").value.trim();
+$("#proxySaveBtn").addEventListener("click", () => {
+  const key = Source.current;
+  const url = $("#proxyUrlInput").value.trim();
+  const warning = checkProxyUrlMistake(key, url);
+  if (warning) {
+    $("#proxyUrlWarning").textContent = warning + " Tetap simpan?";
+    $("#proxyUrlWarning").classList.remove("hidden");
+    if (!confirm(warning + "\n\nTetap simpan URL ini?")) return;
+  }
+  Source.setProxy(key, url);
   renderSourceModalState();
-  toast(Source.komikuProxy ? "Proxy Komiku disimpan" : "URL proxy dikosongkan");
+  toast(Source.proxy(key) ? `Proxy ${SOURCE_LABELS[key]} disimpan` : "URL proxy dikosongkan");
   route();
 });
-$("#komikuUseSameOrigin").addEventListener("click", () => {
-  $("#komikuProxyInput").value = window.location.origin;
-  Source.komikuProxy = window.location.origin;
+$("#proxyUseSameOrigin").addEventListener("click", () => {
+  const key = Source.current;
+  $("#proxyUrlInput").value = window.location.origin;
+  Source.setProxy(key, window.location.origin);
   renderSourceModalState();
-  toast("Memakai /api/* dari domain ini");
+  toast(`Memakai /api/${key}/* dari domain ini`);
   route();
+});
+$("#proxyTestBtn").addEventListener("click", async () => {
+  const key = Source.current;
+  const url = $("#proxyUrlInput").value.trim();
+  const resultEl = $("#proxyTestResult");
+  if (!url) { resultEl.textContent = "Isi URL proxy dulu."; resultEl.style.color = "var(--seal-hi)"; return; }
+  resultEl.textContent = "Menguji koneksi…";
+  resultEl.style.color = "var(--paper-dim)";
+  const prevSaved = Source.proxy(key);
+  Source.setProxy(key, url); // temporarily use the typed value for the test
+  try {
+    const data = await adapterFor(key).popular();
+    if (Array.isArray(data) && data.length > 0) {
+      resultEl.textContent = `✓ Berhasil — dapat ${data.length} judul dari proxy.`;
+      resultEl.style.color = "var(--teal)";
+    } else {
+      resultEl.textContent = "⚠ Proxy merespons tapi hasilnya kosong. Cek log server proxy-mu / selector scraping.";
+      resultEl.style.color = "var(--brass)";
+    }
+  } catch (err) {
+    if (err.code === "PROXY_NOT_CONFIGURED") {
+      resultEl.textContent = "Isi URL proxy dulu.";
+    } else {
+      resultEl.textContent = `✗ Gagal: ${err.message}. Cek URL-nya benar, servernya jalan, dan (kalau SHINIGAMI_API_BASE) sudah diisi.`;
+    }
+    resultEl.style.color = "var(--seal-hi)";
+  } finally {
+    Source.setProxy(key, prevSaved); // don't persist until user clicks "Simpan"
+  }
 });
 
 /* ---------------------------------------------------------
@@ -534,11 +606,12 @@ async function route() {
 }
 
 function renderErrorState(err) {
-  if (err && err.code === "KOMIKU_NOT_CONFIGURED") {
+  if (err && err.code === "PROXY_NOT_CONFIGURED") {
+    const label = SOURCE_LABELS[err.source] || err.source;
     appEl.innerHTML = stateBox({
       icon: "源",
-      title: "Proxy Komiku belum diatur",
-      desc: "Komiku tidak menyediakan API publik. Deploy komiku-proxy/ (folder Node.js yang disertakan) lalu masukkan URL-nya lewat tombol sumber di pojok kanan atas."
+      title: `Proxy ${label} belum diatur`,
+      desc: `${label} tidak menyediakan API publik. Deploy folder proxy-nya (lihat README) lalu masukkan URL-nya lewat tombol sumber di pojok kanan atas.`
     });
     return;
   }
@@ -568,7 +641,7 @@ async function renderHome() {
       <div class="hero__bg" style="background-image:url('${heroPick.cover}')"></div>
       <div class="hero__scrim"></div>
       <div class="hero__content">
-        <div class="hero__eyebrow">Peringkat #1 · ${Source.current === "komiku" ? "Komiku" : "MangaDex"}</div>
+        <div class="hero__eyebrow">Peringkat #1 · ${SOURCE_LABELS[Source.current] || Source.current}</div>
         <h1 class="hero__title">${escapeHtml(heroPick.title)}</h1>
         <p class="hero__desc">${escapeHtml((heroPick.description || "").slice(0, 220))}${(heroPick.description || "").length > 220 ? "…" : ""}</p>
         <div class="hero__actions">
@@ -597,7 +670,7 @@ function cardGrid(items, { ranked = false } = {}) {
   if (!items.length) return stateBox({ title: "Tidak ada data", desc: "Belum ada komik untuk ditampilkan." });
   return `<div class="grid grid--wide">` + items.map((m, i) => `
     <a class="card" href="#/manga/${m.source}/${encodeURIComponent(m.id)}">
-      <span class="card__source ${m.source}">${m.source === "komiku" ? "Komiku" : "MangaDex"}</span>
+      <span class="card__source ${m.source}">${SOURCE_LABELS[m.source] || m.source}</span>
       ${ranked ? `<span class="card__rank">${i + 1}</span>` : ""}
       <img class="card__cover" loading="lazy" src="${m.cover || ""}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 width=%22200%22 height=%22300%22><rect width=%22200%22 height=%22300%22 fill=%22%231c1914%22/></svg>'" alt="${escapeHtml(m.title)}">
       <div class="card__body">
@@ -677,9 +750,10 @@ async function renderBrowse(source) {
         renderLoadMore(results.length > 0);
       });
     } catch { /* genre chips are optional */ }
-  } else if (source === "komiku" && Source.komikuProxy) {
+  } else if (PROXY_SOURCES.includes(source) && Source.proxy(source)) {
     try {
-      const genres = await Komiku.genres();
+      const adapterG = adapterFor(source);
+      const genres = await adapterG.genres();
       const chipsEl = $("#genreChips");
       chipsEl.innerHTML = `<button class="chip active" data-tag="">Semua</button>` +
         genres.map(g => `<button class="chip" data-tag="${g.id}">${escapeHtml(g.name)}</button>`).join("");
@@ -689,9 +763,9 @@ async function renderBrowse(source) {
         $$(".chip", chipsEl).forEach(c => c.classList.remove("active"));
         btn.classList.add("active");
         $("#browseGrid").innerHTML = skeletonGrid(18);
-        const results = btn.dataset.tag ? await Komiku.byGenre(btn.dataset.tag) : await Komiku.popular();
+        const results = btn.dataset.tag ? await adapterG.byGenre(btn.dataset.tag) : await adapterG.popular();
         $("#browseGrid").innerHTML = cardGrid(results);
-        $("#loadMoreWrap").innerHTML = ""; // no pagination for Komiku genre pages
+        $("#loadMoreWrap").innerHTML = ""; // no pagination on genre pages for proxy sources
       });
     } catch { /* genre chips are optional */ }
   }
@@ -721,13 +795,13 @@ async function renderDetail(source, id) {
   appEl.innerHTML = `<div class="detail"><div><div class="skeleton" style="aspect-ratio:2/3;border-radius:12px;"></div></div><div><div class="skeleton" style="height:40px;width:70%;margin-bottom:14px;border-radius:6px;"></div><div class="skeleton" style="height:100px;border-radius:6px;"></div></div></div>`;
 
   let manga, chapters;
-  if (source === "komiku") {
-    const data = await Komiku.detail(id);
-    manga = data.manga;
-    chapters = data.chapters.map(c => ({ id: c.id, chapter: c.chapter, title: c.title || "" }));
-  } else {
+  if (source === "mangadex") {
     manga = await MangaDex.detail(id);
     chapters = await MangaDex.chapters(id);
+  } else {
+    const data = await adapterFor(source).detail(id);
+    manga = data.manga;
+    chapters = data.chapters.map(c => ({ id: c.id, chapter: c.chapter, title: c.title || "" }));
   }
 
   const [inLib, hist] = await Promise.all([isInLibrary(source, id), getHistoryFor(source, id)]);
@@ -742,7 +816,7 @@ async function renderDetail(source, id) {
         ${hist ? `<a class="btn btn--ghost" style="margin-top:10px" href="#/read/${source}/${encodeURIComponent(id)}/${encodeURIComponent(hist.chapterId)}">Lanjut Ch. ${escapeHtml(String(hist.chapterTitle || ""))}</a>` : ""}
       </div>
       <div>
-        <span class="card__source ${source}" style="position:static; display:inline-flex; margin-bottom:10px;">${source === "komiku" ? "Komiku" : "MangaDex"}</span>
+        <span class="card__source ${source}" style="position:static; display:inline-flex; margin-bottom:10px;">${SOURCE_LABELS[source] || source}</span>
         <h1 class="detail__title">${escapeHtml(manga.title)}</h1>
         ${manga.altTitles?.length ? `<div class="detail__alt">${escapeHtml(manga.altTitles.join(" · "))}</div>` : ""}
         <div class="detail__tags">
@@ -828,11 +902,18 @@ async function renderReader(source, mangaId, chapterId) {
   appEl.innerHTML = `<div class="reader"><div class="reader__topbar"><span class="reader__title">Memuat halaman…</span></div><div class="reader__pages">${Array.from({length:3}).map(()=>'<div class="skeleton reader__page-loading"></div>').join('')}</div></div>`;
 
   const adapter = adapterFor(source);
-  const [pages, manga, chapters] = await Promise.all([
-    adapter.pages(chapterId),
-    adapter.detail ? adapter.detail(mangaId).then(d => d.manga || d) : null,
-    source === "mangadex" ? MangaDex.chapters(mangaId) : (await Komiku.detail(mangaId)).chapters
-  ]);
+  let pages, manga, chapters;
+  if (source === "mangadex") {
+    [pages, manga, chapters] = await Promise.all([
+      adapter.pages(chapterId),
+      MangaDex.detail(mangaId),
+      MangaDex.chapters(mangaId)
+    ]);
+  } else {
+    // proxy sources return manga + chapters together from one detail() call — avoid fetching it twice
+    const [p, d] = await Promise.all([adapter.pages(chapterId), adapter.detail(mangaId)]);
+    pages = p; manga = d.manga; chapters = d.chapters;
+  }
 
   const idx = chapters.findIndex(c => c.id === chapterId);
   const prevCh = idx > 0 ? chapters[idx - 1] : null;
@@ -944,7 +1025,7 @@ async function renderLibrary() {
       <img src="${m.cover || ""}" alt="">
       <div class="lib-item__info">
         <a href="#/manga/${m.source}/${encodeURIComponent(m.mangaId)}" class="lib-item__title">${escapeHtml(m.title)}</a>
-        <div class="lib-item__meta">${m.source === "komiku" ? "Komiku" : "MangaDex"}</div>
+        <div class="lib-item__meta">${SOURCE_LABELS[m.source] || m.source}</div>
       </div>
       <button class="lib-item__remove" data-source="${m.source}" data-id="${m.mangaId}">&times;</button>
     </div>
