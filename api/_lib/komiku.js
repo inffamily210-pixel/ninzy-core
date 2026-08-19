@@ -9,6 +9,10 @@
 import * as cheerio from "cheerio";
 
 export const BASE = "https://komiku.org";
+// Komiku's listing pages (/pustaka/...) are now just an empty shell — the
+// actual card grid is loaded client-side via HTMX from this subdomain
+// (see hx-get on the shell page). Fetch this directly instead.
+export const LIST_API = "https://api.komiku.org/manga/";
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
 // Simple in-memory cache. On Vercel this only helps within a warm
@@ -46,25 +50,30 @@ export function parseCards(html) {
   const seen = new Set();
   const items = [];
 
-  $('a[href*="/manga/"]').each((_, el) => {
-    const href = absUrl($(el).attr("href"));
+  // Current markup (served from LIST_API): title/description/chapters live in
+  // <div class="kan">, with a <div class="bgei"> holding the cover image. The
+  // source HTML leaves .bgei's <div> unclosed, so cheerio actually parses .kan
+  // as *nested inside* .bgei rather than as a sibling — handle both just in case.
+  $(".kan").each((_, kanEl) => {
+    const $kan = $(kanEl);
+
+    const href = absUrl($kan.find('a[href*="/manga/"]').first().attr("href"));
     if (!/\/manga\/[^/]+\/?$/.test(href)) return;
     const id = slugFromUrl(href);
     if (seen.has(id)) return;
 
-    let container = $(el);
-    for (let i = 0; i < 4 && container.parent().length; i++) container = container.parent();
-
-    const img = $(el).find("img").attr("data-src") || $(el).find("img").attr("src") || container.find("img").first().attr("data-src") || container.find("img").first().attr("src");
-    const titleEl = container.find(`a[href="${$(el).attr("href")}"]`).filter((i, e) => $(e).text().trim().length > 0).first();
-    const title = (titleEl.text() || $(el).find("img").attr("alt") || "").trim().replace(/^Baca (Manga|Manhwa|Manhua|Komik)\s*/i, "");
+    const title = $kan.find("h3").first().text().trim();
     if (!title) return;
 
-    const chapterLink = container.find('a[href*="-chapter-"]').first();
-    const chapterText = chapterLink.text().trim().replace(/^Chapter\s*/i, "");
+    const $bgei = $kan.closest(".bgei").length ? $kan.closest(".bgei") : $kan.prevAll(".bgei").first();
+    const img = $bgei.find("img").first();
+    const cover = absUrl(img.attr("src") || img.attr("data-src"));
+
+    const chapterSpans = $kan.find(".new1 a").last().find("span");
+    const chapterText = (chapterSpans.last().text() || "").trim().replace(/^Chapter\s*/i, "");
 
     seen.add(id);
-    items.push({ id, title, cover: absUrl(img), chapter: chapterText || "", type: "komiku" });
+    items.push({ id, title, cover, chapter: chapterText || "", type: "komiku" });
   });
 
   return items;
@@ -86,4 +95,4 @@ export function withCors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
   res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=60");
-}
+    }
