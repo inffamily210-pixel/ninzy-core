@@ -103,21 +103,21 @@ function parseCards(html) {
   return items;
 }
 
-app.get("/api/latest", async (req, res) => {
+app.get("/api/komiku/latest", async (req, res) => {
   try {
     const html = await getHtml(`${BASE}/pustaka/?orderby=date`);
     res.json(parseCards(html).slice(0, 30));
   } catch (err) { res.status(502).json({ error: String(err) }); }
 });
 
-app.get("/api/popular", async (req, res) => {
+app.get("/api/komiku/popular", async (req, res) => {
   try {
     const html = await getHtml(`${BASE}/pustaka/?orderby=meta_value_num`);
     res.json(parseCards(html).slice(0, 30));
   } catch (err) { res.status(502).json({ error: String(err) }); }
 });
 
-app.get("/api/search", async (req, res) => {
+app.get("/api/komiku/search", async (req, res) => {
   const q = String(req.query.q || "").trim();
   if (!q) return res.json([]);
   try {
@@ -140,9 +140,9 @@ const KOMIKU_GENRES = [
   { id: "slice-of-life", name: "Slice of Life" }, { id: "ecchi", name: "Ecchi" }
 ];
 
-app.get("/api/genres", (req, res) => res.json(KOMIKU_GENRES));
+app.get("/api/komiku/genres", (req, res) => res.json(KOMIKU_GENRES));
 
-app.get("/api/genre", async (req, res) => {
+app.get("/api/komiku/genre", async (req, res) => {
   const slug = String(req.query.slug || "").trim();
   if (!slug) return res.status(400).json({ error: "missing slug" });
   try {
@@ -151,7 +151,7 @@ app.get("/api/genre", async (req, res) => {
   } catch (err) { res.status(502).json({ error: String(err) }); }
 });
 
-app.get("/api/detail", async (req, res) => {
+app.get("/api/komiku/detail", async (req, res) => {
   const id = String(req.query.id || "").trim();
   if (!id) return res.status(400).json({ error: "missing id" });
   try {
@@ -189,7 +189,7 @@ app.get("/api/detail", async (req, res) => {
   } catch (err) { res.status(502).json({ error: String(err) }); }
 });
 
-app.get("/api/pages", async (req, res) => {
+app.get("/api/komiku/pages", async (req, res) => {
   const id = String(req.query.id || "").trim();
   if (!id) return res.status(400).json({ error: "missing id" });
   try {
@@ -208,6 +208,6 @@ app.get("/api/pages", async (req, res) => {
   } catch (err) { res.status(502).json({ error: String(err) }); }
 });
 
-app.get("/", (req, res) => res.send("Ninzy Core — Komiku proxy is running. See /api/latest, /api/popular, /api/search, /api/detail, /api/pages"));
+app.get("/", (req, res) => res.send("Ninzy Core — Komiku proxy is running. See /api/komiku/latest, /api/komiku/popular, /api/komiku/search, /api/komiku/detail, /api/komiku/pages"));
 
 app.listen(PORT, () => console.log(`Komiku proxy jalan di http://localhost:${PORT}`));
