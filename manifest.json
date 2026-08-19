@@ -1,0 +1,16 @@
+{
+  "name": "Ninzy Core",
+  "short_name": "Ninzy Core",
+  "description": "Baca manga, manhwa, dan manhua dari MangaDex & Komiku dalam satu tempat.",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#14120f",
+  "theme_color": "#14120f",
+  "icons": [
+    {
+      "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 192 192'%3E%3Crect width='192' height='192' fill='%2314120f'/%3E%3Ccircle cx='96' cy='96' r='72' fill='%23b23a2e'/%3E%3Ctext x='96' y='124' font-size='80' text-anchor='middle' fill='white' font-family='sans-serif'%3E忍%3C/text%3E%3C/svg%3E",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    }
+  ]
+}

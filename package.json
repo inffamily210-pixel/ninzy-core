@@ -1,0 +1,10 @@
+{
+  "name": "ninzy-core",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Ninzy Core — baca manga/manhwa/manhua dari MangaDex & Komiku.",
+  "dependencies": {
+    "cheerio": "^1.0.0"
+  }
+}
