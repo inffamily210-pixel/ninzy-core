@@ -1,0 +1,19 @@
+{
+  "name": "ninzy-core-komiku-proxy",
+  "version": "1.0.0",
+  "description": "Proxy server (scraper) yang menjembatani Ninzy Core ke Komiku.org, karena Komiku tidak menyediakan API publik ber-CORS.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "cheerio": "^1.0.0",
+    "node-fetch": "^3.3.2",
+    "node-cache": "^5.1.2"
+  },
+  "engines": { "node": ">=18" }
+}
